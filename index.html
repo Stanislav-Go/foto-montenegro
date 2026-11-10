@@ -76,6 +76,12 @@ h3{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--mute
 .found b{font-weight:500;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .found small{color:var(--muted);font-size:11.5px}
 .found .d{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.sea{border-radius:9px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;background:var(--bg)}
+.sea .hd{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sea .hd strong{font-size:14.5px}
+.sea p{margin:0;font-size:13.5px}
+.sea .chances{display:flex;flex-wrap:wrap;gap:6px}
+.sea .chances span{font-family:var(--mono);font-size:12px;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:3px 7px}
 .verdict{border-radius:9px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;border:1px solid var(--vc);background:color-mix(in srgb,var(--vc) 12%,transparent)}
 .verdict strong{font-size:15.5px;color:var(--vc)}
 .verdict ul{margin:0;padding-left:18px;font-size:13.5px;display:flex;flex-direction:column;gap:2px}
@@ -98,6 +104,12 @@ h3{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--mute
     </div>
     <div class="finder">
       <div class="row2">
+        <select id="goal" aria-label="Что искать">
+          <option value="good">Хорошие условия для съёмки</option>
+          <option value="sea">Облака под ногами</option>
+        </select>
+      </div>
+      <div class="row2">
         <select id="win" aria-label="Когда снимать">
           <option value="now">Сейчас</option>
           <option value="in">Через … часов</option>
@@ -110,7 +122,7 @@ h3{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--mute
         <button class="btn" id="findBtn" type="button" aria-pressed="false">Где снимать</button>
         <button class="btn ghost" id="geoBtn" type="button">Рядом со мной</button>
       </div>
-      <div class="muted" id="findStatus">Покажу только места с хорошими условиями, ближайшие сверху.</div>
+      <div class="muted" id="findStatus">Покажу только подходящие места, ближайшие сверху.</div>
       <div class="found" id="found"></div>
     </div>
     <div class="card" id="detail"><div class="muted">Нажмите на точку на карте.</div></div>
@@ -161,6 +173,20 @@ const chips=document.getElementById('chips');
 ORDER.forEach(c=>{const b=document.createElement('button');b.className='chip';b.type='button';b.style.setProperty('--cc',`var(--c-${c})`);
  b.innerHTML=`<i></i>${CATS[c][0]}`;b.setAttribute('aria-pressed','true');b.onclick=()=>{active.has(c)?active.delete(c):active.add(c);b.setAttribute('aria-pressed',active.has(c));refresh()};chips.appendChild(b)});
 document.getElementById('q').addEventListener('input',refresh);
+const ekey=l=>l.la.toFixed(4)+','+l.lo.toFixed(4);
+let ELEV={}; try{ELEV=JSON.parse(localStorage.getItem('elev1')||'{}')}catch(e){}
+LOCS.forEach(l=>{if(ELEV[ekey(l)]!=null)l.dem=ELEV[ekey(l)];l.cell=(Math.round(l.la*10)/10).toFixed(1)+','+(Math.round(l.lo*10)/10).toFixed(1)});
+const elevOf=l=>l.e!=null?l.e:(l.dem!=null?l.dem:null);
+async function ensureElev(status){
+  const need=LOCS.filter(l=>l.e==null&&l.dem==null);
+  for(let i=0;i<need.length;i+=100){
+    const part=need.slice(i,i+100); status&&status(`Узнаю высоты точек: ${Math.min(i+100,need.length)} из ${need.length}…`);
+    const r=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${part.map(l=>l.la).join(',')}&longitude=${part.map(l=>l.lo).join(',')}`);
+    if(!r.ok) throw new Error('HTTP '+r.status); const j=await r.json();
+    part.forEach((l,n)=>{l.dem=Math.round(j.elevation[n]);ELEV[ekey(l)]=l.dem});
+  }
+  try{localStorage.setItem('elev1',JSON.stringify(ELEV))}catch(e){}
+}
 const km=(a,b,c,d)=>{const dl=(c-a)*R,dn=(d-b)*R;const h=Math.sin(dl/2)**2+Math.cos(a*R)*Math.cos(c*R)*Math.sin(dn/2)**2;return 2*6371*Math.asin(Math.sqrt(h))};
 
 // ---------- sun ----------
@@ -204,7 +230,10 @@ function evalHour(c,h){
     if(golden){s+=20;pro.push('золотой час, тёплый боковой свет')}
     else if(blue){s+=c==='culture'?15:5;pro.push('синий час')}
     else if(h.alt>45){s-=10;con.push('солнце высоко, свет плоский')}
-    if(low>70){s-=(c==='peak'||c==='view')?25:20;con.push(c==='peak'?'вершина может быть в облаках':'низкая облачность закрывает виды')}
+    const seaP=h.sea&&!h.sea.inCloud?h.sea.p:0;
+    if(seaP>=50){s+=golden?18:10;pro.push(`море облаков под ногами (${seaP}%)`)}
+    else if(h.sea&&h.sea.inCloud&&(c==='peak'||c==='view')){s-=25;con.push('точка внутри облака, видимости не будет')}
+    else if(low>70){s-=(c==='peak'||c==='view')?25:20;con.push(c==='peak'?'вершина может быть в облаках':'низкая облачность закрывает виды')}
     else if(low>40){s-=10;con.push(`низкие облака ${low}%`)}
     if(golden&&high>=20&&high<=70&&low<50){s+=12;pro.push('высокие облака подсветятся на закате')}
     if(h.vis!=null){if(h.vis>25000){s+=8;pro.push(`отличная видимость (${Math.round(h.vis/1000)} км)`)}else if(h.vis<8000){s-=15;con.push(`дымка, видимость ${Math.round(h.vis/1000)} км`)}}
@@ -217,14 +246,47 @@ const droneState=(g,w)=>g>12||w>10?['нельзя',css('--bad')]:g>8||w>6?['ос
 
 // ---------- forecast ----------
 const HV='temperature_2m,cloud_cover_low,cloud_cover_mid,cloud_cover_high,precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,visibility';
-function toHours(H){const hrs=H.time.map((t,i)=>({t:new Date(t+'Z'),temp:H.temperature_2m[i],low:H.cloud_cover_low[i],mid:H.cloud_cover_mid[i],high:H.cloud_cover_high[i],pp:H.precipitation_probability[i],pr:H.precipitation[i],ws:H.wind_speed_10m[i],wg:H.wind_gusts_10m[i],vis:H.visibility?H.visibility[i]:null}));
+const LEV=[1000,975,950,925,900,850,800,700,600];
+const PV=LEV.map(p=>`temperature_${p}hPa,relative_humidity_${p}hPa,cloud_cover_${p}hPa,geopotential_height_${p}hPa`).join(',');
+const g_=(H,k,i)=>H[k]?H[k][i]:null;
+function toHours(H){const hasP=!!H['geopotential_height_850hPa'];
+  const hrs=H.time.map((t,i)=>({t:new Date(t+'Z'),temp:g_(H,'temperature_2m',i),low:g_(H,'cloud_cover_low',i),mid:g_(H,'cloud_cover_mid',i),high:g_(H,'cloud_cover_high',i),pp:g_(H,'precipitation_probability',i),pr:g_(H,'precipitation',i),ws:g_(H,'wind_speed_10m',i),wg:g_(H,'wind_gusts_10m',i),vis:g_(H,'visibility',i),
+    prof:hasP?LEV.map(p=>({p,z:g_(H,`geopotential_height_${p}hPa`,i),t:g_(H,`temperature_${p}hPa`,i),rh:g_(H,`relative_humidity_${p}hPa`,i),cc:g_(H,`cloud_cover_${p}hPa`,i)})).filter(x=>x.z!=null&&x.t!=null):null}));
   hrs.forEach((h,i)=>{h.rain72=hrs.slice(Math.max(0,i-72),i).reduce((a,b)=>a+(b.pr||0),0)});return hrs}
+// ---- «облака под ногами»: где верх облачного слоя относительно точки ----
+function seaEval(h,E){
+  if(!h.prof||!h.prof.length||E==null||E<300) return null;
+  const P=h.prof.slice().sort((a,b)=>a.z-b.z);
+  const cl=x=>Math.max(x.cc??0, x.rh>=97?85:x.rh>=93?60:0);
+  const below=P.filter(x=>x.z<E-30);
+  if(!below.length) return null;
+  let b=-1; P.forEach((x,i)=>{if(x.z<E-30&&cl(x)>=50)b=i});
+  if(b<0){const mx=Math.max(...below.map(cl));return {p:Math.round(mx/5),top:null,inCloud:false,inv:false,cov:mx}}
+  let k=b; while(k+1<P.length&&cl(P[k+1])>=50&&P[k+1].z<E+1500)k++;
+  let top=P[k].z, inv=false, lapse=null;
+  if(k+1<P.length){const lo=P[k],hi=P[k+1];const f=Math.max(0,Math.min(1,(cl(lo)-50)/Math.max(1,cl(lo)-cl(hi))));top=lo.z+(hi.z-lo.z)*f;
+    lapse=(hi.t-lo.t)/(hi.z-lo.z)*1000; inv=lapse>-1||(lo.rh-hi.rh)>30;}
+  const inCloud=top>=E-40;
+  const layer=P.filter(x=>x.z<Math.min(top,E)&&x.z>=top-800);
+  const cov=layer.length?Math.max(...layer.map(cl)):cl(P[b]);
+  const above=P.filter(x=>x.z>Math.max(E,top)+50&&x.z<E+2000);
+  const aboveC=above.length?Math.max(...above.map(cl)):0;
+  const clear=1-0.9*aboveC/100;
+  const m=E-top, mF=m<40?0:m<120?0.45:m<250?0.8:1;
+  const invF=lapse==null?0.9:inv?1.15:lapse>-4?1:0.8;
+  const pF=(h.pp||0)>60?0.5:(h.pp||0)>30?0.8:1;
+  let p=Math.round(Math.min(95,Math.max(0,100*cov/100*clear*mF*invF*pF)));
+  if(inCloud)p=Math.min(p,5);
+  return {p,top:Math.round(top),inCloud,inv,cov:Math.round(cov),above:Math.round(aboveC)};
+}
+const seaColor=p=>p>=60?css('--good'):p>=30?css('--ok'):css('--bad');
 const cache={};
 async function forecast(l){
   const key=l.la.toFixed(3)+','+l.lo.toFixed(3); if(cache[key]&&Date.now()-cache[key].t<30*60e3) return cache[key].d;
-  const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${l.la}&longitude=${l.lo}&hourly=${HV}&wind_speed_unit=ms&timezone=GMT&past_days=3&forecast_days=4`);
-  if(!r.ok) throw new Error('HTTP '+r.status); const hrs=toHours((await r.json()).hourly);
-  hrs.forEach(h=>h.alt=sunAlt(h.t,l.la,l.lo)); cache[key]={t:Date.now(),d:hrs}; return hrs;
+  const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${l.la}&longitude=${l.lo}&hourly=${HV},${PV}&wind_speed_unit=ms&timezone=GMT&past_days=3&forecast_days=4`);
+  if(!r.ok) throw new Error('HTTP '+r.status); const j=await r.json(); const hrs=toHours(j.hourly);
+  if(l.e==null&&j.elevation!=null){l.dem=Math.round(j.elevation);ELEV[ekey(l)]=l.dem;try{localStorage.setItem('elev1',JSON.stringify(ELEV))}catch(e){}}
+  const E=elevOf(l); hrs.forEach(h=>{h.alt=sunAlt(h.t,l.la,l.lo);h.sea=seaEval(h,E)}); cache[key]={t:Date.now(),d:hrs}; return hrs;
 }
 // grid forecast for the finder (cells ~0.1°)
 let grid=null, gridT=0;
@@ -240,6 +302,19 @@ async function loadGrid(status){
     j.forEach((d,n)=>out[part[n]]=toHours(d.hourly));
   }
   grid=out; gridT=Date.now(); return grid;
+}
+const SEA_CATS=new Set(['view','peak','culture','park']);
+let seaGrid=null, seaT=0;
+async function loadSeaGrid(status){
+  if(seaGrid&&Date.now()-seaT<45*60e3) return seaGrid;
+  const keys=[...new Set(LOCS.filter(l=>SEA_CATS.has(l.c)&&(elevOf(l)||0)>=500).map(l=>l.cell))], out={};
+  for(let i=0;i<keys.length;i+=40){
+    const part=keys.slice(i,i+40); status(`Загружаю облачность по высотам: ${Math.min(i+40,keys.length)} из ${keys.length} районов…`);
+    const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${part.map(k=>k.split(',')[0]).join(',')}&longitude=${part.map(k=>k.split(',')[1]).join(',')}&hourly=precipitation_probability,cloud_cover_mid,cloud_cover_high,${PV}&timezone=GMT&forecast_days=3`);
+    if(!r.ok) throw new Error('HTTP '+r.status); let j=await r.json(); if(!Array.isArray(j)) j=[j];
+    j.forEach((d,n)=>out[part[n]]=toHours(d.hourly));
+  }
+  seaGrid=out; seaT=Date.now(); return seaGrid;
 }
 const inH=document.getElementById('inH');
 [1,2,3,4,5,6,7,8,9,10,11,12,14,16,18,20,22,24,30,36,42,48].forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=`через ${n} ч`;inH.appendChild(o)});
@@ -259,7 +334,16 @@ function windowHours(hrs,l,win){
 }
 const winTxt=w=>({now:'сейчас',in:`через ${inH.value} ч (${relDay(winTarget())} около ${fmt(winTarget())})`,['24h']:'в ближайшие сутки',tomorrow:'завтра',sunset:'сегодня на закате',sunrise:'завтра на рассвете'})[w];
 async function runFinder(){
-  const st=document.getElementById('findStatus'), win=document.getElementById('win').value;
+  const st=document.getElementById('findStatus'), win=document.getElementById('win').value, goal=document.getElementById('goal').value;
+  if(goal==='sea'){ try{
+    await ensureElev(t=>st.textContent=t); const g=await loadSeaGrid(t=>st.textContent=t);
+    let light=false;
+    LOCS.forEach(l=>{l.best=null;const E=elevOf(l);if(!SEA_CATS.has(l.c)||E==null||E<500||!g[l.cell])return;
+      windowHours(g[l.cell],l,win).forEach(h=>{if(sunAlt(h.t,l.la,l.lo)<-6)return;light=true;const r=seaEval(h,E);if(r&&!r.inCloud&&(!l.best||r.p>l.best.s))l.best={s:r.p,t:h.t,sea:r}})});
+    GOOD=50; const wt=winTxt(win), n=LOCS.filter(l=>l.best&&l.best.s>=GOOD).length;
+    st.textContent=!light?`${wt[0].toUpperCase()+wt.slice(1)} будет темно. Для моря облаков лучше всего «Завтра на рассвете».`:n?`Облака под ногами ${wt}: ${n} мест с вероятностью от ${GOOD}%, ближайшие сверху.`:`Моря облаков ${wt} не видно ни на одной точке. Попробуйте «Завтра на рассвете» или другое время.`;
+    refresh();
+  }catch(e){st.textContent=`Не удалось загрузить прогноз (${e.message}). Проверьте интернет.`} return; }
   try{ const g=await loadGrid(t=>st.textContent=t);
     LOCS.forEach(l=>{const hrs=g[l.cell];l.best=null;if(!hrs)return;
       windowHours(hrs,l,win).forEach(h0=>{const h={...h0,alt:sunAlt(h0.t,l.la,l.lo)};const e=evalHour(l.c,h);if(e.s!=null&&(!l.best||e.s>l.best.s))l.best={s:e.s,t:h.t,e,h}})});
@@ -272,14 +356,15 @@ async function runFinder(){
 function renderFound(){
   const box=document.getElementById('found');
   const list=LOCS.filter(visible).map(l=>({l,d:km(origin.la,origin.lo,l.la,l.lo)})).sort((a,b)=>a.d-b.d).slice(0,40);
-  box.innerHTML=''; if(!list.length&&LOCS.some(l=>l.best)){box.innerHTML='<div class="muted">Сейчас нет мест с хорошими условиями. Попробуйте другое время.</div>';return}
+  box.innerHTML=''; if(!list.length&&LOCS.some(l=>l.best)){box.innerHTML=`<div class="muted">${document.getElementById('goal').value==='sea'?'Нет точек с морем облаков в это время.':'Сейчас нет мест с хорошими условиями.'} Попробуйте другое время.</div>`;return}
   list.forEach(({l,d})=>{const b=document.createElement('button');b.type='button';b.style.setProperty('--cc',`var(--c-${l.c})`);
-    b.innerHTML=`<i></i><span style="min-width:0"><b></b><small></small></span><span class="pill" style="background:${scColor(l.best.s)}">${l.best.s}</span><span class="d">${Math.round(d)} км</span>`;
-    b.querySelector('b').textContent=l.n;b.querySelector('small').textContent=`${CATS[l.c][0]} · ${relDay(l.best.t)} ${fmt(l.best.t)}`;
+    b.innerHTML=`<i></i><span style="min-width:0"><b></b><small></small></span><span class="pill" style="background:${l.best.sea?seaColor(l.best.s):scColor(l.best.s)}">${l.best.s}${l.best.sea?'%':''}</span><span class="d">${Math.round(d)} км</span>`;
+    b.querySelector('b').textContent=l.n;b.querySelector('small').textContent=l.best.sea?`${elevOf(l)} м · верх облаков ~${l.best.sea.top??'?'} м · ${relDay(l.best.t)} ${fmt(l.best.t)}`:`${CATS[l.c][0]} · ${relDay(l.best.t)} ${fmt(l.best.t)}`;
     b.onclick=()=>{map.setView([l.la,l.lo],Math.max(map.getZoom(),12));select(l.i)};box.appendChild(b)});
 }
 document.getElementById('findBtn').onclick=e=>{finder=!finder;e.currentTarget.setAttribute('aria-pressed',finder);e.currentTarget.textContent=finder?'Показать все':'Где снимать';
-  if(finder) runFinder(); else {document.getElementById('found').innerHTML='';document.getElementById('findStatus').textContent='Покажу только места с хорошими условиями, ближайшие сверху.';refresh()}};
+  if(finder) runFinder(); else {document.getElementById('found').innerHTML='';document.getElementById('findStatus').textContent='Покажу только подходящие места, ближайшие сверху.';refresh()}};
+document.getElementById('goal').onchange=()=>{if(document.getElementById('goal').value==='sea'&&document.getElementById('win').value==='now'){document.getElementById('win').value='sunrise';inH.hidden=true}if(finder)runFinder()};
 document.getElementById('win').onchange=()=>{inH.hidden=document.getElementById('win').value!=='in';if(finder)runFinder()};
 inH.onchange=()=>finder&&runFinder();
 document.getElementById('geoBtn').onclick=()=>{const st=document.getElementById('findStatus');
@@ -315,12 +400,29 @@ function verdictHTML(l,fut){
   } else if(bestAll&&bestAll.h.t>now.t&&bestAll.e.s>cur.s+10){next=`Ещё лучше будет ${relDay(bestAll.h.t)} в ${fmt(bestAll.h.t)} (оценка ${bestAll.e.s}).`}
   return `<div class="verdict" style="--vc:${vc}"><strong>${title}${cur.s!=null?` · ${cur.s}/100`:''}</strong>${items.length?`<ul>${items.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}${next?`<div class="next">${next}</div>`:''}</div>`;
 }
+function seaHTML(l,fut){
+  const E=elevOf(l); if(E==null||E<300||!fut[0]||!fut[0].sea) return '';
+  const cur=fut[0].sea;
+  const light=fut.filter(h=>h.sea&&h.alt>-6&&h.t<=Date.now()+72*36e5);
+  const best=light.slice().sort((a,b)=>b.sea.p-a.sea.p); const picked=[];
+  for(const h of best){if(h.sea.p<20)break;if(picked.every(p=>Math.abs(p.t-h.t)>3*36e5))picked.push(h);if(picked.length===4)break}
+  picked.sort((a,b)=>a.t-b.t);
+  let txt;
+  if(cur.inCloud) txt=`Сейчас верх облаков около ${cur.top} м, точка (${E} м) внутри облака.`;
+  else if(cur.top!=null) txt=`Верх облачного слоя около ${cur.top} м, вы на ${E} м: облака на ${E-cur.top} м ниже.${cur.inv?' Над слоем инверсия, верх должен быть ровным.':''}${cur.above>40?' Выше тоже облачно, солнца может не быть.':''}`;
+  else txt=`Плотного облачного слоя ниже ${E} м сейчас нет.`;
+  return `<div class="sea"><div class="hd"><strong>Облака под ногами</strong><span class="pill" style="background:${seaColor(cur.p)}">сейчас ${cur.p}%</span></div>
+   <p>${txt}</p>
+   ${picked.length?`<div class="muted">Лучшие шансы на 3 дня:</div><div class="chances">${picked.map(h=>`<span style="border-color:${seaColor(h.sea.p)}">${relDay(h.t)} ${fmt(h.t)} · ${h.sea.p}%</span>`).join('')}</div>`:'<div class="muted">В ближайшие 3 дня моря облаков под этой точкой не ожидается.</div>'}
+   <div class="muted">Оценка по модели с шагом 300–500 м по высоте и сеткой около 10 км, ориентировочная. Туман в узких долинах модель часто не видит.</div></div>`;
+}
 function select(i){sel=i;restyle();renderDetail();}
 async function renderDetail(){
   const l=LOCS[sel]; const card=document.getElementById('detail'); card.style.setProperty('--cc',`var(--c-${l.c})`);
   const [Y,M,D]=dateIn.value.split('-').map(Number); const s=sunDay(Date.UTC(Y,M-1,D),l.la,l.lo);
   card.innerHTML=`<div><span class="kind"><i></i>${CATS[l.c][0]}</span><h2></h2>${l.r?'<div class="ru"></div>':''}</div>
    <div id="fcVerdict"><div class="muted">Загружаю прогноз…</div></div>
+   <div id="fcSea"></div>
    <div class="light"><div><small>Восход</small><b>${fmt(s.set&&s.set[0])}</b></div><div><small>Золотой час с</small><b>${fmt(s.gold&&s.gold[1])}</b></div><div><small>Закат</small><b>${fmt(s.set&&s.set[1])}</b></div>
    <div><small>Утро, золото до</small><b>${fmt(s.gold&&s.gold[0])}</b></div><div><small>Синий час до</small><b>${fmt(s.blue&&s.blue[1])}</b></div><div><small>Азимут заката</small><b>${Math.round(s.az)}° ${dir(s.az)}</b></div></div>
    <div class="tip">${CATS[l.c][1]}</div>
@@ -333,6 +435,7 @@ async function renderDetail(){
   if(LOCS[sel]!==l) return;
   const fut=hrs.filter(h=>h.t>=Date.now()-36e5);
   document.getElementById('fcVerdict').innerHTML=verdictHTML(l,fut);
+  document.getElementById('fcSea').innerHTML=seaHTML(l,fut);
   fut.forEach(h=>h.sc=evalHour(l.c,h).s);
   const best=fut.filter(h=>h.sc!=null).slice().sort((a,b)=>b.sc-a.sc);
   const picked=[];for(const h of best){if(picked.every(p=>Math.abs(p.t-h.t)>3*36e5))picked.push(h);if(picked.length===3)break}
@@ -347,6 +450,8 @@ async function renderDetail(){
    <div class="fc"><table>
    <tr><th></th>${days.map(d=>`<td class="day">${d.d}</td>`+d.h.map(h=>`<td>${fmt(h.t).slice(0,2)}</td>`).join('')).join('')}</tr>
    ${row('Оценка',h=>`<td><span class="sc" style="background:${scColor(h.sc)};padding:1px 4px">${h.sc??''}</span></td>`)}
+   ${(elevOf(l)||0)>=300?row('Под ногами %',h=>h.sea?`<td style="color:${h.sea.inCloud?css('--muted'):seaColor(h.sea.p)};font-weight:600">${h.sea.inCloud?'обл':h.sea.p}</td>`:'<td></td>'):''}
+   ${(elevOf(l)||0)>=300?row('Верх обл. м',h=>cell(h.sea&&h.sea.top)):''}
    ${row('Низк. обл. %',h=>cell(h.low))}${row('Сред. обл. %',h=>cell(h.mid))}${row('Выс. обл. %',h=>cell(h.high))}
    ${row('Осадки %',h=>cell(h.pp))}${row('Ветер м/с',h=>cell(h.ws,v=>Math.round(v)))}${row('Порывы',h=>cell(h.wg,v=>Math.round(v)))}
    ${row('Видим. км',h=>cell(h.vis,v=>Math.round(v/1000)))}${row('°C',h=>cell(h.temp,v=>Math.round(v)))}
